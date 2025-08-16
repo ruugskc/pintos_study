@@ -1,6 +1,9 @@
-### DISCLAIMER: We will not use this project for Operating Systems and Lab (CS330) by Youngjin Kwon from 2025 Fall Semester.
+# Pintos(카이스트 ver)
+핀토스 중간 과정 커밋용 리포지토리
 
-Brand new pintos for Operating Systems and Lab (CS330), KAIST, by Youngjin Kwon.
+운영체제 강의 때의 기억을 되새겨보며 끝까지 과제 진행할 예정입니다..
 
-The manual is available at https://casys-kaist.github.io/pintos-kaist/.
-
+나중에 커밋 잘 했나 확인해보는 것도 재밌을 것 같아요^^
+## 초기 세팅
+프로젝트 루트 파일에서 `source ./activate` 입력
+* 왜 해야 하는지는 모르겠음 ㅜㅜ
