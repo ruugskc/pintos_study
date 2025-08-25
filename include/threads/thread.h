@@ -92,8 +92,16 @@ struct thread {
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
 
+	/* Project 1: 스레드가 자는 동안 남은 슬립 시간
+	update_sleep_ticks()에 의해 0이 되면
+	해당 스레드 다시 스케줄링 */
+	int64_t sleep_ticks;
+
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+
+	/* Project 1: sleep_list에 저장하기 위한 용도 */
+	struct list_elem sleep_elem;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */

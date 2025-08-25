@@ -24,10 +24,22 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
+/* Project 1:
+타이머에 의해 잠든 스레드 저장 용도 */
+static struct list sleep_list;
+
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
+
+/* Project 1: 매 틱마다 sleeping_ticks 업데이트
+& 실행 재개해야 하는 스레드 처리 */
+static void update_sleeping_ticks(void);
+/* Project 1: 두 스레드가 깨기까지 남은 틱 비교 */
+static bool ticks_less 
+	(const struct list_elem *, const struct list_elem *, void *);
+
 
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
@@ -43,6 +55,9 @@ timer_init (void) {
 	outb (0x40, count >> 8);
 
 	intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+
+	/* Project 1: sleep_list 초기화 */
+	list_init(&sleep_list);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -90,11 +105,18 @@ timer_elapsed (int64_t then) {
 /* Suspends execution for approximately TICKS timer ticks. */
 void
 timer_sleep (int64_t ticks) {
-	int64_t start = timer_ticks ();
+	enum intr_level old_level = intr_get_level ();
+	ASSERT (old_level == INTR_ON);
 
-	ASSERT (intr_get_level () == INTR_ON);
-	while (timer_elapsed (start) < ticks)
-		thread_yield ();
+	old_level = intr_disable ();
+
+	// 의문: 리오더링 고려해야 할까?
+	struct thread *curr = thread_current();
+	curr->sleep_ticks = ticks;
+	list_insert_ordered(&sleep_list, &(curr->sleep_elem), ticks_less, NULL);
+	thread_block();
+
+	intr_set_level(old_level);
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -125,6 +147,7 @@ timer_print_stats (void) {
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
+	update_sleeping_ticks();
 	thread_tick ();
 }
 
@@ -183,4 +206,29 @@ real_time_sleep (int64_t num, int32_t denom) {
 		ASSERT (denom % 1000 == 0);
 		busy_wait (loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000));
 	}
+}
+
+static void
+update_sleeping_ticks(void) {
+	for(struct list_elem *curr = list_begin(&sleep_list); curr != list_tail(&sleep_list); curr = list_next(curr)) {
+		struct thread *cur_thread = list_entry(curr, struct thread, sleep_elem);
+
+		if(cur_thread->sleep_ticks <= 1) {
+			list_pop_front(&sleep_list);
+			thread_unblock(cur_thread);
+		} else {
+			(cur_thread->sleep_ticks)--;
+		}
+	}
+}
+
+/* Project 1: 두 스레드가 깨기까지 남은 틱 비교 */
+static bool 
+ticks_less (const struct list_elem *a_, const struct list_elem *b_,
+            void *aux UNUSED) 
+{
+	const struct thread *a = list_entry (a_, struct thread, sleep_elem);
+	const struct thread *b = list_entry (b_, struct thread, sleep_elem);
+  
+  return a->sleep_ticks < b->sleep_ticks;
 }

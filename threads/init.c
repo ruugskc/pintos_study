@@ -172,11 +172,11 @@ paging_init (uint64_t mem_end) {
 static char **
 read_command_line (void) {
 	static char *argv[LOADER_ARGS_LEN / 2 + 1];
-	char *p, *end;
-	int argc;
+	char *p, *end; // 인자로 전달된 전체 문자열의 시작 위치와 최대 경계
+	int argc; // 핀토스 실행시 전달된 인자 수
 	int i;
 
-	argc = *(uint32_t *) ptov (LOADER_ARG_CNT);
+	argc = *(uint32_t *) ptov (LOADER_ARG_CNT); 
 	p = ptov (LOADER_ARGS);
 	end = p + LOADER_ARGS_LEN;
 	for (i = 0; i < argc; i++) {
@@ -184,7 +184,7 @@ read_command_line (void) {
 			PANIC ("command line arguments overflow");
 
 		argv[i] = p;
-		p += strnlen (p, end - p) + 1;
+		p += strnlen (p, end - p) + 1; // NULL문자 고려
 	}
 	argv[argc] = NULL;
 
@@ -206,6 +206,8 @@ static char **
 parse_options (char **argv) {
 	for (; *argv != NULL && **argv == '-'; argv++) {
 		char *save_ptr;
+
+		// '=' 기준 좌변을 name에, 우변을 value에 저장
 		char *name = strtok_r (*argv, "=", &save_ptr);
 		char *value = strtok_r (NULL, "", &save_ptr);
 
