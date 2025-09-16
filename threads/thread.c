@@ -62,6 +62,8 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
+static void print_thread_val(struct list_elem *curr);
+
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -126,11 +128,28 @@ thread_start (void) {
 	sema_init (&idle_started, 0);
 	thread_create ("idle", PRI_MIN, idle, &idle_started);
 
+	/*
+	// idle 제대로 만들어졌나 확인
+	struct list_elem *curr = list_begin(&ready_list);
+	while(curr != list_end(&ready_list)) {
+		struct thread *cur_th = list_entry(curr, struct thread, elem);
+		printf("thread_start() - thread %d[%s] 생성 완\n", cur_th->tid, cur_th->name);
+		curr = curr->next;
+	}
+	*/
+
 	/* Start preemptive thread scheduling. */
 	intr_enable ();
 
 	/* Wait for the idle thread to initialize idle_thread. */
 	sema_down (&idle_started);
+
+	/*
+	printf("thread_start() - 현재 스레드는 [%s]\n", thread_current ()->name);
+
+	if(list_empty(&ready_list))
+		printf("thread_start() - idle 스레드 안 들어감(정상수 ㅋ)\n");
+	*/
 }
 
 /* Called by the timer interrupt handler at each timer tick.
@@ -159,6 +178,11 @@ void
 thread_print_stats (void) {
 	printf ("Thread: %lld idle ticks, %lld kernel ticks, %lld user ticks\n",
 			idle_ticks, kernel_ticks, user_ticks);
+}
+
+/* ready_list 원소 수 */
+int thread_ready_cnt(void) {
+	return list_size(&ready_list);
 }
 
 /* Creates a new kernel thread named NAME with the given initial
@@ -240,8 +264,26 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+
+	/* ready_list에 t 삽입 */
+	list_insert_ordered (&ready_list, &t->elem, greater_priority, NULL);
 	t->status = THREAD_READY;
+
+	/* ready_list에 넣은 t의 우선순위가 더 크면
+	선점 스케줄링 진행 */
+	if(t->priority > thread_get_priority ()) {
+
+		// 인터럽트 문맥 -> 즉시 스케줄링하면 안됨. 핸들러 리턴 후 스케줄링
+		if(intr_context ()){
+			intr_yield_on_return ();
+		}
+		else {
+			intr_set_level (old_level);
+			thread_yield ();
+			return;
+		}
+	}
+	
 	intr_set_level (old_level);
 }
 
@@ -302,16 +344,53 @@ thread_yield (void) {
 	ASSERT (!intr_context ());
 
 	old_level = intr_disable ();
-	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+	if (curr != idle_thread) 
+		list_insert_ordered(&ready_list, &curr->elem, greater_priority, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* Sets the current thread's priority to NEW_PRIORITY.
+우선 순위 큐 수정: 우선 순위 설정 후 대기 큐의 원소 중 
+어떤 1개보다 작은 경우 선점 스케줄링 진행 */
 void
-thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+thread_set_priority (int new_priority) 
+{
+	enum intr_level old_level = intr_disable ();
+
+	struct thread *me = thread_current ();
+	me->init_priority = new_priority;
+	refresh_priority ();
+
+	// 선점 발생 타이밍
+	if(!list_empty(&ready_list) && me->priority 
+			< list_entry (list_begin(&ready_list), struct thread, elem)->priority) {
+		list_insert_ordered (&ready_list, &me->elem, greater_priority, NULL);
+		do_schedule(THREAD_READY);
+	}
+
+	intr_set_level(old_level);
+}
+
+/* 자신의 donations 중 최상위 우선순위로 변경 */
+void
+refresh_priority (void)
+{
+	struct thread *me = thread_current ();
+	me->priority = me->init_priority;
+
+	if (!list_empty (&me->donations)) {
+		list_sort (&me->donations, thread_cmp_donate_priority, NULL);
+		struct thread *front = list_entry (list_front (&me->donations),
+				struct thread, donations_elem);
+		me->priority = front->priority;
+	}
+}
+
+/* 로그용 */
+static void print_thread_val(struct list_elem *curr) {
+	struct thread *thread = list_entry (curr, struct thread, elem);
+	printf("tid = %d\n", thread->tid);
 }
 
 /* Returns the current thread's priority. */
@@ -361,6 +440,9 @@ idle (void *idle_started_ UNUSED) {
 	struct semaphore *idle_started = idle_started_;
 
 	idle_thread = thread_current ();
+
+	// printf("idle 스레드(tid = %d) 실행\n", idle_thread->tid);
+
 	sema_up (idle_started);
 
 	for (;;) {
@@ -408,6 +490,10 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	/* priority donation 구현 위해 추가 */
+	t->init_priority = priority;
+	t->waiting_lock = NULL;
+	list_init (&t->donations);
 	t->magic = THREAD_MAGIC;
 }
 
@@ -529,12 +615,15 @@ static void
 do_schedule(int status) {
 	ASSERT (intr_get_level () == INTR_OFF);
 	ASSERT (thread_current()->status == THREAD_RUNNING);
+
 	while (!list_empty (&destruction_req)) {
 		struct thread *victim =
 			list_entry (list_pop_front (&destruction_req), struct thread, elem);
 		palloc_free_page(victim);
 	}
 	thread_current ()->status = status;
+	// 우선순위 양도로 인해 깨진 정렬 상태 복구
+	list_sort (&ready_list, greater_priority, NULL);
 	schedule ();
 }
 
@@ -587,4 +676,44 @@ allocate_tid (void) {
 	lock_release (&tid_lock);
 
 	return tid;
+}
+
+bool 
+greater_priority(const struct list_elem *_a,
+                const struct list_elem *_b,
+                void *aux UNUSED)
+{
+	const struct thread *a = list_entry(_a, struct thread, elem);
+	const struct thread *b = list_entry(_b, struct thread, elem);
+	
+	return a->priority > b->priority;
+}
+
+/* nested donation
+: 내가 기다리는 lock 소유자 및 소유자가 기다리는 lock에 대해 우선순위 연쇄 양도
+깊이(lock 대기-소유 관계 추적) 8까지 연쇄 양도 진행 */
+void
+donate_priority (void)
+{
+	ASSERT (intr_get_level () == INTR_OFF);
+
+	struct thread *cur = thread_current ();
+	for (int depth = 0; depth < 8; depth++) {
+		if (!cur->waiting_lock) break;
+
+		struct thread *holder = cur->waiting_lock->holder;
+		holder->priority = cur->priority;
+		cur = holder;
+	}
+}
+
+/* 각 스레드의 donations 정렬 기준
+: priority 내림차순 */
+bool thread_cmp_donate_priority (const struct list_elem *_a,
+								const struct list_elem *_b,
+								void *aux UNUSED)
+{
+	const struct thread *a = list_entry (_a, struct thread, donations_elem);
+	const struct thread *b = list_entry (_b, struct thread, donations_elem);
+	return a->priority > b->priority;
 }

@@ -110,10 +110,9 @@ timer_sleep (int64_t ticks) {
 
 	old_level = intr_disable ();
 
-	// 의문: 리오더링 고려해야 할까?
 	struct thread *curr = thread_current();
 	curr->sleep_ticks = ticks;
-	list_insert_ordered(&sleep_list, &(curr->sleep_elem), ticks_less, NULL);
+	list_insert_ordered(&sleep_list, &curr->elem, ticks_less, NULL);
 	thread_block();
 
 	intr_set_level(old_level);
@@ -147,7 +146,7 @@ timer_print_stats (void) {
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
-	update_sleeping_ticks();
+	update_sleeping_ticks ();
 	thread_tick ();
 }
 
@@ -210,14 +209,16 @@ real_time_sleep (int64_t num, int32_t denom) {
 
 static void
 update_sleeping_ticks(void) {
-	for(struct list_elem *curr = list_begin(&sleep_list); curr != list_tail(&sleep_list); curr = list_next(curr)) {
-		struct thread *cur_thread = list_entry(curr, struct thread, sleep_elem);
+	struct list_elem *curr = list_begin(&sleep_list);
+	while(curr != list_end(&sleep_list)) {
+		struct thread *cur_thread = list_entry(curr, struct thread, elem);
 
 		if(cur_thread->sleep_ticks <= 1) {
-			list_pop_front(&sleep_list);
+			curr = list_remove (curr);
 			thread_unblock(cur_thread);
 		} else {
 			(cur_thread->sleep_ticks)--;
+			curr = curr->next;
 		}
 	}
 }
@@ -227,8 +228,8 @@ static bool
 ticks_less (const struct list_elem *a_, const struct list_elem *b_,
             void *aux UNUSED) 
 {
-	const struct thread *a = list_entry (a_, struct thread, sleep_elem);
-	const struct thread *b = list_entry (b_, struct thread, sleep_elem);
+	const struct thread *a = list_entry (a_, struct thread, elem);
+	const struct thread *b = list_entry (b_, struct thread, elem);
   
   return a->sleep_ticks < b->sleep_ticks;
 }

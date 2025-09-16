@@ -91,17 +91,23 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
+	int init_priority;					/* lock 소유 해제시 init_priority == priority */
+	struct lock *waiting_lock;			/* 해제되길 기다리는 lock. 즉 정지(BLOCKED)의 원인 */
 
 	/* Project 1: 스레드가 자는 동안 남은 슬립 시간
-	update_sleep_ticks()에 의해 0이 되면
-	해당 스레드 다시 스케줄링 */
+	update_sleep_ticks()에 의해 0이 되면 해당 스레드 다시 스케줄링 */
 	int64_t sleep_ticks;
+
+	/* 나에게 우선 순위를 양도해 준 스레드 집합
+	내가 여러 개의 lock을 가질 때 처리하기 위함(multiple locks) */
+	struct list donations;
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
-	/* Project 1: sleep_list에 저장하기 위한 용도 */
-	struct list_elem sleep_elem;
+	/* donations의 원소
+	elem은 lock->waiters에 사용되므로 리스트 원소 새로 정의 */
+	struct list_elem donations_elem;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -127,6 +133,7 @@ void thread_start (void);
 
 void thread_tick (void);
 void thread_print_stats (void);
+int thread_ready_cnt(void);
 
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
@@ -143,6 +150,7 @@ void thread_yield (void);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+void refresh_priority (void);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
@@ -150,5 +158,16 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+/* 인자 1이 2보다 더 크면 true 리턴 
+우선순위 기준 내림차순(크면 앞에 위치) 정렬하기 위함 */
+bool greater_priority
+(const struct list_elem *, const struct list_elem *, void *);
+
+/* priority donation 구현 위해 정의 */
+void donate_priority (void);
+bool thread_cmp_donate_priority (const struct list_elem *_a,
+								const struct list_elem *_b,
+								void *aux UNUSED);
 
 #endif /* threads/thread.h */

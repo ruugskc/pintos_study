@@ -487,3 +487,12 @@ list_min (struct list *list, list_less_func *less, void *aux) {
 	}
 	return min;
 }
+
+/* 리스트 각 원소에 작업 수행 */
+void list_do (struct list *list, list_routine *each, void *aux) {
+	struct list_elem *curr = list_begin(list);
+	while (curr != list_end(list)) {
+		each(curr);
+		curr = curr->next;
+	}
+}
